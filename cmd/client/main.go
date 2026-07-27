@@ -22,6 +22,13 @@ func main() {
 	defer connection.Close()
 	fmt.Println("successfully connected to RabbitMQ server")
 
+	// 1. ADDED: We need to open a channel so the client can PUBLISH messages
+	publishCh, err := connection.Channel()
+	if err != nil {
+		log.Fatalf("failed to open publish channel: %v\n", err)
+	}
+	defer publishCh.Close()
+
 	username, err := gamelogic.ClientWelcome()
 	if err != nil {
 		log.Fatalf("failed to get client welcome message: %v\n", err)
@@ -29,21 +36,35 @@ func main() {
 
 	gamestate := gamelogic.NewGameState(username)
 
-	queueName := routing.PauseKey + "." + username
-
+	// Subscribe to Pause Messages
+	pauseQueueName := routing.PauseKey + "." + username
 	err = pubsub.SubscribeJSON(
 		connection,
 		routing.ExchangePerilDirect,
-		queueName,
+		pauseQueueName,
 		routing.PauseKey,
 		pubsub.TransientQueue,
 		handlerPause(gamestate),
 	)
 	if err != nil {
-		log.Fatalf("failed to subscribe to queue %s: %v\n", queueName, err)
+		log.Fatalf("failed to subscribe to pause messages: %v\n", err)
 	}
 
-	fmt.Printf("Client %s connected to queue %s\n", username, queueName)
+	// 2. ADDED: Subscribe to Move Messages using the army_moves.* wildcard
+	moveQueueName := routing.ArmyMovesPrefix + "." + username
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilTopic,
+		moveQueueName,
+		routing.ArmyMovesPrefix+".*",
+		pubsub.TransientQueue,
+		handlerMove(gamestate),
+	)
+	if err != nil {
+		log.Fatalf("failed to subscribe to move messages: %v\n", err)
+	}
+
+	fmt.Printf("Client %s connected and subscribed to queues\n", username)
 
 	for {
 		words := gamelogic.GetInput()
@@ -58,12 +79,25 @@ func main() {
 				fmt.Printf("Error spawning unit: %v\n", err)
 			}
 		case "move":
-			_, err := gamestate.CommandMove(words)
+			move, err := gamestate.CommandMove(words)
 			if err != nil {
 				fmt.Printf("Error moving unit: %v\n", err)
 				continue
 			}
-			fmt.Println("unit moved successfully")
+
+			// 3. ADDED: Publish the move to the topic exchange!
+			err = pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilTopic,
+				routing.ArmyMovesPrefix+"."+username,
+				move,
+			)
+			if err != nil {
+				fmt.Printf("Error publishing move: %v\n", err)
+				continue
+			}
+			fmt.Println("Move published successfully.")
+
 		case "status":
 			gamestate.CommandStatus()
 		case "help":
@@ -83,5 +117,13 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
 	return func(msg routing.PlayingState) {
 		defer fmt.Print("> ")
 		gs.HandlePause(msg)
+	}
+}
+
+// 4. ADDED: A new handler function for processing moves from other players
+func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
+	return func(msg gamelogic.ArmyMove) {
+		defer fmt.Print("> ")
+		gs.HandleMove(msg)
 	}
 }
