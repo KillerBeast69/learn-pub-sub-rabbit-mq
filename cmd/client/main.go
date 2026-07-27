@@ -27,15 +27,23 @@ func main() {
 		log.Fatalf("failed to get client welcome message: %v\n", err)
 	}
 
+	gamestate := gamelogic.NewGameState(username)
+
 	queueName := routing.PauseKey + "." + username
-	_, _, err = pubsub.DeclareAndBind(connection, routing.ExchangePerilDirect, queueName, routing.PauseKey, pubsub.TransientQueue)
+
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilDirect,
+		queueName,
+		routing.PauseKey,
+		pubsub.TransientQueue,
+		handlerPause(gamestate),
+	)
 	if err != nil {
-		log.Fatalf("failed to declare and bind queue: %v\n", err)
+		log.Fatalf("failed to subscribe to queue %s: %v\n", queueName, err)
 	}
 
 	fmt.Printf("Client %s connected to queue %s\n", username, queueName)
-
-	gamestate := gamelogic.NewGameState(username)
 
 	for {
 		words := gamelogic.GetInput()
@@ -71,4 +79,9 @@ func main() {
 	}
 }
 
-func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState)
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(msg routing.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(msg)
+	}
+}

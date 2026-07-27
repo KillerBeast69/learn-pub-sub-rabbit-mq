@@ -9,10 +9,10 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type simpleQueueType int
+type SimpleQueueType int
 
 const (
-	DurableQueue simpleQueueType = iota
+	DurableQueue SimpleQueueType = iota
 	TransientQueue
 )
 
@@ -42,7 +42,7 @@ func DeclareAndBind(
 	exchange,
 	queueName,
 	key string,
-	queueType simpleQueueType, // simpleQueueType is an "enum" type I made to represent "durable" or "transient"
+	queueType SimpleQueueType, // SimpleQueueType is an "enum" type I made to represent "durable" or "transient"
 ) (*amqp.Channel, amqp.Queue, error) {
 	ch, err := conn.Channel()
 	if err != nil {
@@ -95,4 +95,46 @@ func DeclareAndBind(
 	}
 
 	return ch, queue, nil
+}
+
+func SubscribeJSON[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+	handler func(T),
+) error {
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	if err != nil {
+		return fmt.Errorf("failed to declare and bind: %v", err)
+	}
+
+	msgs, err := ch.Consume(
+		queue.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to register a consumer: %v", err)
+	}
+
+	go func() {
+		for d := range msgs {
+			var val T
+			err := json.Unmarshal(d.Body, &val)
+			if err != nil {
+				fmt.Printf("failed to unmarshal message: %v\n", err)
+				continue
+			}
+			handler(val)
+			d.Ack(false)
+		}
+	}()
+
+	return nil
 }
