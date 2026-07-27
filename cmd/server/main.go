@@ -28,32 +28,19 @@ func main() {
 	defer ch.Close()
 	fmt.Println("successfully opened a channel")
 
-	gamelogic.PrintServerHelp()
-
-	q, err := ch.QueueDeclare(
-		"game_logs",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		log.Fatalf("failed to declare a queue: %v\n", err)
-	}
-	fmt.Printf("successfully declared a queue: %s\n", q.Name)
-
-	err = ch.QueueBind(
-		q.Name,
-		routing.GameLogSlug,
+	_, _, err = pubsub.DeclareAndBind(
+		connection,
 		routing.ExchangePerilTopic,
-		false,
-		nil,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.DurableQueue,
 	)
 	if err != nil {
-		log.Fatalf("failed to bind a queue: %v\n", err)
+		log.Fatalf("failed to declare and bind a queue: %v\n", err)
 	}
-	fmt.Printf("successfully bound queue %s to exchange %s with routing key %s\n", q.Name, routing.ExchangePerilTopic, routing.GameLogSlug)
+	fmt.Printf("successfully declared and bound a queue to exchange %s with routing key %s\n", routing.ExchangePerilTopic, routing.GameLogSlug+".*")
+
+	gamelogic.PrintServerHelp()
 
 	for {
 		words := gamelogic.GetInput()
