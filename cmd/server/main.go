@@ -30,6 +30,31 @@ func main() {
 
 	gamelogic.PrintServerHelp()
 
+	q, err := ch.QueueDeclare(
+		"game_logs",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("failed to declare a queue: %v\n", err)
+	}
+	fmt.Printf("successfully declared a queue: %s\n", q.Name)
+
+	err = ch.QueueBind(
+		q.Name,
+		routing.GameLogSlug,
+		routing.ExchangePerilTopic,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("failed to bind a queue: %v\n", err)
+	}
+	fmt.Printf("successfully bound queue %s to exchange %s with routing key %s\n", q.Name, routing.ExchangePerilTopic, routing.GameLogSlug)
+
 	for {
 		words := gamelogic.GetInput()
 		if len(words) == 0 {

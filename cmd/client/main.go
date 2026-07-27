@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -13,8 +11,7 @@ import (
 )
 
 func main() {
-
-	fmt.Println("Starting Peril server...")
+	fmt.Println("Starting Peril client...")
 
 	connectionString := "amqp://guest:guest@127.0.0.1:5672/"
 
@@ -38,10 +35,38 @@ func main() {
 
 	fmt.Printf("Client %s connected to queue %s\n", username, queueName)
 
-	// Wait for interrupt signal to gracefully shutdown the server
+	gamestate := gamelogic.NewGameState(username)
 
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
-	fmt.Println("shutting down server...")
+	for {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
+			continue
+		}
+
+		switch words[0] {
+		case "spawn":
+			err = gamestate.CommandSpawn(words)
+			if err != nil {
+				fmt.Printf("Error spawning unit: %v\n", err)
+			}
+		case "move":
+			_, err := gamestate.CommandMove(words)
+			if err != nil {
+				fmt.Printf("Error moving unit: %v\n", err)
+				continue
+			}
+			fmt.Println("unit moved successfully")
+		case "status":
+			gamestate.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			fmt.Println("Spamming not allowed yet!")
+		case "quit":
+			gamelogic.PrintQuit()
+			return
+		default:
+			fmt.Printf("unknown command: %s\n", words[0])
+		}
+	}
 }

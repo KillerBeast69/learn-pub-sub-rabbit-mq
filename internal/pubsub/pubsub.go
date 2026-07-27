@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -46,6 +47,24 @@ func DeclareAndBind(
 	ch, err := conn.Channel()
 	if err != nil {
 		return nil, amqp.Queue{}, fmt.Errorf("failed to open a channel: %v", err)
+	}
+
+	exchangeType := "direct"
+	if exchange == routing.ExchangePerilTopic {
+		exchangeType = "topic"
+	}
+
+	err = ch.ExchangeDeclare(
+		exchange,
+		exchangeType,
+		true,  // durable
+		false, // autoDelete
+		false, // internal
+		false, // noWait
+		nil,   // args
+	)
+	if err != nil {
+		return nil, amqp.Queue{}, fmt.Errorf("failed to declare exchange: %v", err)
 	}
 
 	isDurable := queueType == DurableQueue
