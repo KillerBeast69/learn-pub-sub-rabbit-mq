@@ -16,6 +16,15 @@ const (
 	TransientQueue
 )
 
+// Export AckType so other packages can use it
+type AckType int
+
+const (
+	Ack         AckType = 0
+	NackRequeue AckType = 1
+	NackDiscard AckType = 2
+)
+
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	jsonBytes, err := json.Marshal(val)
 	if err != nil {
@@ -42,7 +51,7 @@ func DeclareAndBind(
 	exchange,
 	queueName,
 	key string,
-	queueType SimpleQueueType, // SimpleQueueType is an "enum" type I made to represent "durable" or "transient"
+	queueType SimpleQueueType,
 ) (*amqp.Channel, amqp.Queue, error) {
 	ch, err := conn.Channel()
 	if err != nil {
@@ -102,8 +111,8 @@ func SubscribeJSON[T any](
 	exchange,
 	queueName,
 	key string,
-	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
-	handler func(T),
+	queueType SimpleQueueType,
+	handler func(T) AckType, // Updated to use AckType
 ) error {
 	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
 	if err != nil {
@@ -131,8 +140,20 @@ func SubscribeJSON[T any](
 				fmt.Printf("failed to unmarshal message: %v\n", err)
 				continue
 			}
-			handler(val)
-			d.Ack(false)
+
+			result := handler(val)
+
+			switch result {
+			case Ack:
+				d.Ack(false)
+				fmt.Println("message ACKed")
+			case NackRequeue:
+				d.Nack(false, true)
+				fmt.Println("message NACKed (requeue)")
+			case NackDiscard:
+				d.Nack(false, false)
+				fmt.Println("message NACKed (discard)")
+			}
 		}
 	}()
 
