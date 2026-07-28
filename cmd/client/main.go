@@ -22,7 +22,7 @@ func main() {
 	defer connection.Close()
 	fmt.Println("successfully connected to RabbitMQ server")
 
-	// 1. ADDED: We need to open a channel so the client can PUBLISH messages
+	// 1. We need to open a channel so the client can PUBLISH messages
 	publishCh, err := connection.Channel()
 	if err != nil {
 		log.Fatalf("failed to open publish channel: %v\n", err)
@@ -50,7 +50,7 @@ func main() {
 		log.Fatalf("failed to subscribe to pause messages: %v\n", err)
 	}
 
-	// 2. ADDED: Subscribe to Move Messages using the army_moves.* wildcard
+	// Subscribe to Move Messages using the army_moves.* wildcard
 	moveQueueName := routing.ArmyMovesPrefix + "." + username
 	err = pubsub.SubscribeJSON(
 		connection,
@@ -58,10 +58,23 @@ func main() {
 		moveQueueName,
 		routing.ArmyMovesPrefix+".*",
 		pubsub.TransientQueue,
-		handlerMove(gamestate),
+		handlerMove(gamestate, publishCh), // Pass the publish channel here!
 	)
 	if err != nil {
 		log.Fatalf("failed to subscribe to move messages: %v\n", err)
+	}
+
+	// Subscribe to War Messages using the war.* wildcard
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilTopic,
+		"war",
+		routing.WarRecognitionsPrefix+".*",
+		pubsub.DurableQueue,
+		handlerWar(gamestate),
+	)
+	if err != nil {
+		log.Fatalf("failed to subscribe to war messages: %v\n", err)
 	}
 
 	fmt.Printf("Client %s connected and subscribed to queues\n", username)
@@ -85,7 +98,7 @@ func main() {
 				continue
 			}
 
-			// 3. ADDED: Publish the move to the topic exchange!
+			// Publish the move to the topic exchange!
 			err = pubsub.PublishJSON(
 				publishCh,
 				routing.ExchangePerilTopic,
@@ -121,18 +134,54 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.Ack
 	}
 }
 
-// 4. ADDED: A new handler function for processing moves from other players
-func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckType {
+// Updated handler for processing moves and detecting war
+func handlerMove(gs *gamelogic.GameState, publishCh *amqp.Channel) func(gamelogic.ArmyMove) pubsub.AckType {
 	return func(msg gamelogic.ArmyMove) pubsub.AckType {
 		defer fmt.Print("> ")
 		outcome := gs.HandleMove(msg)
 
 		switch outcome {
-		case gamelogic.MoveOutComeSafe, gamelogic.MoveOutcomeMakeWar:
+		case gamelogic.MoveOutComeSafe:
 			return pubsub.Ack
+		case gamelogic.MoveOutcomeMakeWar:
+			// Publish war recognition message
+			err := pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilTopic,
+				routing.WarRecognitionsPrefix+"."+gs.GetUsername(),
+				gamelogic.RecognitionOfWar{
+					Attacker: msg.Player,
+					Defender: gs.GetPlayerSnap(),
+				},
+			)
+			if err != nil {
+				fmt.Printf("error publishing war recognition: %v\n", err)
+				return pubsub.NackRequeue
+			}
+			return pubsub.NackRequeue // The madness begins here
 		case gamelogic.MoveOutcomeSamePlayer:
 			return pubsub.NackDiscard
 		default:
+			return pubsub.NackDiscard
+		}
+	}
+}
+
+// New handler for processing war messages
+func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.AckType {
+	return func(msg gamelogic.RecognitionOfWar) pubsub.AckType {
+		defer fmt.Print("> ")
+		outcome, _, _ := gs.HandleWar(msg)
+
+		switch outcome {
+		case gamelogic.WarOutcomeNotInvolved:
+			return pubsub.NackRequeue // Requeue so another client can pick it up
+		case gamelogic.WarOutcomeNoUnits:
+			return pubsub.NackDiscard
+		case gamelogic.WarOutcomeOpponentWon, gamelogic.WarOutcomeYouWon, gamelogic.WarOutcomeDraw:
+			return pubsub.Ack
+		default:
+			fmt.Println("error: unknown war outcome")
 			return pubsub.NackDiscard
 		}
 	}
