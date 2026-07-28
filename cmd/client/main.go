@@ -158,7 +158,7 @@ func handlerMove(gs *gamelogic.GameState, publishCh *amqp.Channel) func(gamelogi
 				fmt.Printf("error publishing war recognition: %v\n", err)
 				return pubsub.NackRequeue
 			}
-			return pubsub.NackRequeue // The madness begins here
+			return pubsub.Ack // The madness begins here
 		case gamelogic.MoveOutcomeSamePlayer:
 			return pubsub.NackDiscard
 		default:
