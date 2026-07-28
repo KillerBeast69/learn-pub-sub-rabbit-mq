@@ -80,13 +80,17 @@ func DeclareAndBind(
 	isAutoDelete := queueType == TransientQueue
 	isExclusive := queueType == TransientQueue
 
+	args := amqp.Table{
+		"x-dead-letter-exchange": "peril_dlx",
+	}
+
 	queue, err := ch.QueueDeclare(
 		queueName,
 		isDurable,
 		isAutoDelete,
 		isExclusive,
 		false,
-		nil,
+		args,
 	)
 	if err != nil {
 		return nil, amqp.Queue{}, fmt.Errorf("failed to declare queue: %v", err)
