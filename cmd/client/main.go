@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -71,7 +72,7 @@ func main() {
 		"war",
 		routing.WarRecognitionsPrefix+".*",
 		pubsub.DurableQueue,
-		handlerWar(gamestate),
+		handlerWar(gamestate, publishCh), // <-- FIX: Pass publishCh here!
 	)
 	if err != nil {
 		log.Fatalf("failed to subscribe to war messages: %v\n", err)
@@ -168,10 +169,10 @@ func handlerMove(gs *gamelogic.GameState, publishCh *amqp.Channel) func(gamelogi
 }
 
 // New handler for processing war messages
-func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.AckType {
+func handlerWar(gs *gamelogic.GameState, publishCh *amqp.Channel) func(gamelogic.RecognitionOfWar) pubsub.AckType {
 	return func(msg gamelogic.RecognitionOfWar) pubsub.AckType {
 		defer fmt.Print("> ")
-		outcome, _, _ := gs.HandleWar(msg)
+		outcome, winner, loser := gs.HandleWar(msg)
 
 		switch outcome {
 		case gamelogic.WarOutcomeNotInvolved:
@@ -179,6 +180,32 @@ func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub
 		case gamelogic.WarOutcomeNoUnits:
 			return pubsub.NackDiscard
 		case gamelogic.WarOutcomeOpponentWon, gamelogic.WarOutcomeYouWon, gamelogic.WarOutcomeDraw:
+			var logMsg string
+			if outcome == gamelogic.WarOutcomeDraw {
+				logMsg = fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser)
+			} else {
+				logMsg = fmt.Sprintf("%s won a war against %s", winner, loser)
+			}
+
+			gameLog := routing.GameLog{
+				CurrentTime: time.Now(),
+				Message:     logMsg,
+				Username:    gs.GetUsername(),
+			}
+
+			// FIX: routing key should be GameLogSlug.username (with the dot)
+			routingKey := routing.GameLogSlug + "." + msg.Attacker.Username
+
+			err := pubsub.PublishGob(
+				publishCh, // FIX: Pass the actual amqp channel
+				routing.ExchangePerilTopic,
+				routingKey,
+				gameLog,
+			)
+			if err != nil {
+				fmt.Printf("Failed to publish game log: %v\n", err)
+				return pubsub.NackRequeue
+			}
 			return pubsub.Ack
 		default:
 			fmt.Println("error: unknown war outcome")
