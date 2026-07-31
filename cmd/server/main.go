@@ -28,17 +28,19 @@ func main() {
 	defer ch.Close()
 	fmt.Println("successfully opened a channel")
 
-	_, _, err = pubsub.DeclareAndBind(
+	// Replace DeclareAndBind with SubscribeGob
+	err = pubsub.SubscribeGob(
 		connection,
 		routing.ExchangePerilTopic,
 		routing.GameLogSlug,
-		routing.GameLogSlug+".*",
+		routing.GameLogSlug+".*", // Wildcard to capture all usernames
 		pubsub.DurableQueue,
+		handlerLog(),
 	)
 	if err != nil {
-		log.Fatalf("failed to declare and bind a queue: %v\n", err)
+		log.Fatalf("failed to subscribe to game logs: %v\n", err)
 	}
-	fmt.Printf("successfully declared and bound a queue to exchange %s with routing key %s\n", routing.ExchangePerilTopic, routing.GameLogSlug+".*")
+	fmt.Printf("successfully subscribed to queue %s with routing key %s\n", routing.GameLogSlug, routing.GameLogSlug+".*")
 
 	gamelogic.PrintServerHelp()
 
@@ -78,5 +80,20 @@ func main() {
 		default:
 			fmt.Println("I don't understand that command.")
 		}
+	}
+}
+
+// handlerLog processes the incoming GameLog messages
+func handlerLog() func(routing.GameLog) pubsub.AckType {
+	return func(gamelog routing.GameLog) pubsub.AckType {
+		defer fmt.Print("> ")
+
+		err := gamelogic.WriteLog(gamelog)
+		if err != nil {
+			fmt.Printf("error writing log: %v\n", err)
+			return pubsub.NackRequeue // Requeue so we don't lose the log if disk writing fails
+		}
+
+		return pubsub.Ack
 	}
 }

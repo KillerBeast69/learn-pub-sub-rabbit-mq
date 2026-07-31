@@ -118,52 +118,50 @@ func SubscribeJSON[T any](
 	queueName,
 	key string,
 	queueType SimpleQueueType,
-	handler func(T) AckType, // Updated to use AckType
+	handler func(T) AckType,
 ) error {
-	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
-	if err != nil {
-		return fmt.Errorf("failed to declare and bind: %v", err)
+	unmarshaller := func(data []byte) (T, error) {
+		var val T
+		err := json.Unmarshal(data, &val)
+		return val, err
 	}
 
-	msgs, err := ch.Consume(
-		queue.Name,
-		"",
-		false,
-		false,
-		false,
-		false,
-		nil,
+	return subscribe(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+		handler,
+		unmarshaller,
 	)
-	if err != nil {
-		return fmt.Errorf("failed to register a consumer: %v", err)
+}
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T) AckType,
+) error {
+	unmarshaller := func(data []byte) (T, error) {
+		var val T
+		buffer := bytes.NewReader(data)
+		dec := gob.NewDecoder(buffer)
+		err := dec.Decode(&val)
+		return val, err
 	}
 
-	go func() {
-		for d := range msgs {
-			var val T
-			err := json.Unmarshal(d.Body, &val)
-			if err != nil {
-				fmt.Printf("failed to unmarshal message: %v\n", err)
-				continue
-			}
-
-			result := handler(val)
-
-			switch result {
-			case Ack:
-				d.Ack(false)
-				fmt.Println("message ACKed")
-			case NackRequeue:
-				d.Nack(false, true)
-				fmt.Println("message NACKed (requeue)")
-			case NackDiscard:
-				d.Nack(false, false)
-				fmt.Println("message NACKed (discard)")
-			}
-		}
-	}()
-
-	return nil
+	return subscribe(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+		handler,
+		unmarshaller,
+	)
 }
 
 func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
@@ -187,4 +185,57 @@ func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
 		},
 	)
 	return err
+}
+
+func subscribe[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType SimpleQueueType,
+	handler func(T) AckType,
+	unmarshaller func([]byte) (T, error),
+) error {
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
+	if err != nil {
+		return fmt.Errorf("failed to declare and bind: %v", err)
+	}
+
+	msgs, err := ch.Consume(
+		queue.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to register a consume: %v", err)
+	}
+
+	go func() {
+		for d := range msgs {
+			val, err := unmarshaller(d.Body)
+			if err != nil {
+				fmt.Printf("failed to unmarshal message: %v\n", err)
+				continue
+			}
+
+			result := handler(val)
+
+			switch result {
+			case Ack:
+				d.Ack(false)
+				fmt.Println("message ACKed")
+			case NackRequeue:
+				d.Nack(false, true)
+				fmt.Println("message NACKed (requeue)")
+			case NackDiscard:
+				d.Nack(false, false)
+				fmt.Println("message NACKed (discard)")
+			}
+		}
+	}()
+	return nil
 }
