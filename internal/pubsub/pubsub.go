@@ -145,23 +145,53 @@ func SubscribeGob[T any](
 	queueType SimpleQueueType,
 	handler func(T) AckType,
 ) error {
-	unmarshaller := func(data []byte) (T, error) {
-		var val T
-		buffer := bytes.NewReader(data)
-		dec := gob.NewDecoder(buffer)
-		err := dec.Decode(&val)
-		return val, err
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	if err != nil {
+		return fmt.Errorf("failed to declare and bind: %v", err)
 	}
 
-	return subscribe(
-		conn,
-		exchange,
-		queueName,
-		key,
-		queueType,
-		handler,
-		unmarshaller,
+	msgs, err := ch.Consume(
+		queue.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
 	)
+	if err != nil {
+		return fmt.Errorf("failed to register a consumer: %v", err)
+	}
+
+	go func() {
+		for d := range msgs {
+			buffer := bytes.NewReader(d.Body)
+			decoder := gob.NewDecoder(buffer)
+
+			var val T
+			err := decoder.Decode(&val)
+			if err != nil {
+				fmt.Printf("failed to decode message: %v\n", err)
+				continue
+			}
+
+			result := handler(val)
+
+			switch result {
+			case Ack:
+				d.Ack(false)
+				fmt.Println("message ACKed")
+			case NackRequeue:
+				d.Nack(false, true)
+				fmt.Println("message NACKed (requeue)")
+			case NackDiscard:
+				d.Nack(false, false)
+				fmt.Println("message NACKed (discard)")
+			}
+		}
+	}()
+
+	return nil
 }
 
 func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
