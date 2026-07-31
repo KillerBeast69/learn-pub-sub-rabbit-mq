@@ -150,6 +150,16 @@ func SubscribeGob[T any](
 		return fmt.Errorf("failed to declare and bind: %v", err)
 	}
 
+	// Limit the prefetch count to 10
+	err = ch.Qos(
+		10,    // prefetch count
+		0,     // prefetch size (0 means no limit)
+		false, // global (false means it applies to this specific channel)
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set QoS: %v", err)
+	}
+
 	msgs, err := ch.Consume(
 		queue.Name,
 		"",
@@ -229,6 +239,16 @@ func subscribe[T any](
 	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
 	if err != nil {
 		return fmt.Errorf("failed to declare and bind: %v", err)
+	}
+
+	// Limit the prefetch count to 10
+	err = ch.Qos(
+		10,    // prefetch count
+		0,     // prefetch size (0 means no limit)
+		false, // global (false means it applies to this specific channel)
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set QoS: %v", err)
 	}
 
 	msgs, err := ch.Consume(
